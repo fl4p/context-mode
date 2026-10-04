@@ -1378,6 +1378,11 @@ export function formatBatchQueryResults(
   const sections: string[] = [];
   let outputSize = 0;
 
+  // `${title}\u0000${snippet}` -> the first query that emitted it. extractSnippet returns the
+  // content verbatim when it is shorter than the window, so a section matched by several queries
+  // yields byte-identical excerpts; without this, N queries over M short sections cost N*M copies.
+  const emitted = new Map<string, string>();
+
   // When scope is "global", searchWithFallback receives `undefined` for the
   // source filter, which makes it query the entire persistent index instead
   // of only the chunks just produced by this batch's commands. Default
@@ -1396,10 +1401,20 @@ export function formatBatchQueryResults(
     if (results.length > 0) {
       for (const result of results) {
         const snippet = extractSnippet(result.content, query, 3000, result.highlighted);
+        const key = `${result.title}\u0000${snippet}`;
+        const firstQuery = emitted.get(key);
         sections.push(`### ${result.title}`);
-        sections.push(snippet);
-        sections.push("");
-        outputSize += snippet.length + result.title.length;
+        if (firstQuery !== undefined) {
+          // Same section, byte-identical excerpt: point back instead of re-emitting it. The section
+          // is still listed under this query, so "this query matched it" is preserved.
+          sections.push(`(identical excerpt already shown under \`${firstQuery}\`)\n`);
+          outputSize += result.title.length + 56;
+        } else {
+          emitted.set(key, query);
+          sections.push(snippet);
+          sections.push("");
+          outputSize += snippet.length + result.title.length;
+        }
       }
       continue;
     }
