@@ -1378,9 +1378,13 @@ export function formatBatchQueryResults(
   const sections: string[] = [];
   let outputSize = 0;
 
-  // `${title}\u0000${snippet}` -> the first query that emitted it. extractSnippet returns the
-  // content verbatim when it is shorter than the window, so a section matched by several queries
+  // `${title.length}:${title}${snippet}` -> the first query that emitted it. extractSnippet returns
+  // the content verbatim when it is shorter than the window, so a section matched by several queries
   // yields byte-identical excerpts; without this, N queries over M short sections cost N*M copies.
+  //
+  // The title is LENGTH-PREFIXED rather than separated by a NUL: titles come from arbitrary command
+  // stdout headings (store.ts #chunkMarkdown) and JS trim() does not strip U+0000, so a title can
+  // contain one and a NUL separator would not be injective. The length prefix always is.
   const emitted = new Map<string, string>();
 
   // When scope is "global", searchWithFallback receives `undefined` for the
@@ -1401,14 +1405,16 @@ export function formatBatchQueryResults(
     if (results.length > 0) {
       for (const result of results) {
         const snippet = extractSnippet(result.content, query, 3000, result.highlighted);
-        const key = `${result.title}\u0000${snippet}`;
+        const key = `${result.title.length}:${result.title}${snippet}`;
         const firstQuery = emitted.get(key);
         sections.push(`### ${result.title}`);
         if (firstQuery !== undefined) {
           // Same section, byte-identical excerpt: point back instead of re-emitting it. The section
-          // is still listed under this query, so "this query matched it" is preserved.
-          sections.push(`(identical excerpt already shown under \`${firstQuery}\`)\n`);
-          outputSize += result.title.length + 56;
+          // is still listed under this query, so "this query matched it" is preserved. Charge the
+          // pointer's ACTUAL length: the query it names is arbitrary, so a fixed cost undercounts.
+          const pointer = `(identical excerpt already shown under \`${firstQuery}\`)\n`;
+          sections.push(pointer);
+          outputSize += result.title.length + pointer.length;
         } else {
           emitted.set(key, query);
           sections.push(snippet);
@@ -3751,7 +3757,9 @@ EXAMPLE: ctx_batch_execute(
         .min(1)
         .describe(
           "Search queries to extract information from indexed output. Use 5-8 comprehensive queries. " +
-          "Each returns top 5 matching sections with full content. " +
+          "Each returns up to 3 matching sections. A section whose excerpt is byte-identical to one " +
+          "already emitted for an earlier query is listed with a pointer to that query instead of " +
+          "repeating the same text; its content is still in the response, just not duplicated. " +
           "This is your ONLY chance — put ALL your questions here. No follow-up calls needed.",
         )),
       timeout: z
