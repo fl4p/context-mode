@@ -34,6 +34,7 @@ import {
 import { classifyNonZeroExit } from "./exit-classify.js";
 import { startLifecycleGuard, noteMcpActivity, noteRequestStart, noteRequestEnd, attachMcpActivityTap } from "./lifecycle.js";
 import { charSafePrefix } from "./truncate.js";
+import { compactToolsList, resolveToolSchemaMode, toolSchemaModeWarning } from "./tool-schema-mode.js";
 import {
   describeStorageDirectorySource,
   ensureWritableStorageDir,
@@ -405,6 +406,7 @@ export function installStrictClientSchemaCompat(target: McpServer = server): voi
             /* leave this tool's schema unchanged */
           }
         }
+        if (resolveToolSchemaMode() === "compact") result.tools = compactToolsList(result.tools);
       }
       return result as never;
     });
@@ -5444,6 +5446,10 @@ async function main() {
 // exists and can be wrapped. Makes ctx_* schemas safe for strict (Gemini
 // function-calling) clients like Antigravity CLI (`agy`) / Gemini CLI.
 installStrictClientSchemaCompat();
+
+// Once per server start, on stderr (never stdout, which carries JSON-RPC).
+const toolSchemaWarning = toolSchemaModeWarning();
+if (toolSchemaWarning) console.error(toolSchemaWarning);
 
 if (process.env.CONTEXT_MODE_EMBEDDED_PLUGIN_TOOLS !== "1") {
   main().catch((err) => {
